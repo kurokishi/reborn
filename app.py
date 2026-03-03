@@ -2,17 +2,20 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import re
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import time
-from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
+from typing import Optional, Dict, Any, List
+import json
+import os
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Reborn Rich | Analisis Saham AI",
     page_icon="💰",
-    layout="centered",
-    initial_sidebar_state="collapsed",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 # ── Custom CSS ─────────────────────────────────────────────────────────────────
@@ -28,7 +31,7 @@ html, body, [data-testid="stAppViewContainer"] {
 [data-testid="stAppViewContainer"] { background-color: #0a0705 !important; }
 [data-testid="stHeader"] { background-color: #0a0705 !important; }
 [data-testid="stSidebar"] { background-color: #0d0b07 !important; }
-.block-container { max-width: 860px !important; padding-top: 2rem !important; }
+.block-container { max-width: 1400px !important; padding-top: 1rem !important; }
 
 /* ─ Typography ─ */
 h1, h2, h3 { font-family: 'Playfair Display', Georgia, serif !important; }
@@ -37,9 +40,9 @@ p, div, span, label { font-family: 'Courier Prime', monospace !important; }
 /* ─ Header ─ */
 .rr-header {
     text-align: center;
-    padding: 2rem 0 1rem;
+    padding: 1rem 0 1rem;
     border-bottom: 1px solid #2a2010;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
 }
 .rr-eyebrow {
     font-family: 'Courier Prime', monospace !important;
@@ -51,7 +54,7 @@ p, div, span, label { font-family: 'Courier Prime', monospace !important; }
 }
 .rr-title {
     font-family: 'Playfair Display', Georgia, serif !important;
-    font-size: clamp(2rem, 6vw, 3.5rem);
+    font-size: clamp(2rem, 4vw, 3rem);
     color: #d4af37;
     margin: 0;
     text-shadow: 0 0 30px #d4af3755;
@@ -65,48 +68,12 @@ p, div, span, label { font-family: 'Courier Prime', monospace !important; }
     margin-top: 0.4rem;
 }
 
-/* ─ Input ─ */
-.stTextArea textarea {
-    background-color: #0d0b07 !important;
-    color: #e8d5a0 !important;
-    border: 1px solid #2a2010 !important;
-    border-radius: 4px !important;
-    font-family: 'Playfair Display', serif !important;
-    font-size: 1rem !important;
-    caret-color: #d4af37 !important;
-}
-.stTextArea textarea:focus {
-    border-color: #d4af3766 !important;
-    box-shadow: 0 0 12px #d4af3720 !important;
-}
-
-/* ─ Button ─ */
-.stButton > button {
-    background: linear-gradient(135deg, #d4af37, #a07d20) !important;
-    color: #0a0705 !important;
-    border: none !important;
-    border-radius: 2px !important;
-    font-family: 'Courier Prime', monospace !important;
-    font-weight: 700 !important;
-    letter-spacing: 0.2em !important;
-    font-size: 0.8rem !important;
-    padding: 0.6rem 2rem !important;
-    text-transform: uppercase !important;
-    box-shadow: 0 0 20px #d4af3733 !important;
-    transition: all 0.3s !important;
-    width: 100% !important;
-}
-.stButton > button:hover {
-    box-shadow: 0 0 30px #d4af3766 !important;
-    transform: translateY(-1px) !important;
-}
-
 /* ─ Cards ─ */
 .rr-card {
     background: #0d0b07;
     border: 1px solid #1e1810;
     border-radius: 4px;
-    padding: 1.25rem 1.5rem;
+    padding: 1rem 1.2rem;
     margin-bottom: 1rem;
     transition: border-color 0.3s, box-shadow 0.3s;
 }
@@ -125,47 +92,84 @@ p, div, span, label { font-family: 'Courier Prime', monospace !important; }
 .rr-card-body {
     font-family: 'Playfair Display', serif !important;
     color: #c8a96e;
-    font-size: 0.95rem;
-    line-height: 1.75;
+    font-size: 0.9rem;
+    line-height: 1.6;
 }
 
-/* ─ Decision Banner ─ */
-.rr-decision-beli {
-    border-color: #4ade8044 !important;
-    box-shadow: 0 0 40px #4ade8022 !important;
-    background: radial-gradient(ellipse at 50% 0%, #4ade8010, #0d0b07 70%) !important;
+/* ─ Alert Banner ─ */
+.rr-alert {
+    background: linear-gradient(135deg, #d4af3710, #0d0b07);
+    border-left: 3px solid #d4af37;
+    padding: 0.8rem 1rem;
+    margin-bottom: 0.5rem;
+    border-radius: 0 4px 4px 0;
 }
-.rr-decision-jual {
-    border-color: #f8717144 !important;
-    box-shadow: 0 0 40px #f8717122 !important;
-    background: radial-gradient(ellipse at 50% 0%, #f8717110, #0d0b07 70%) !important;
+.rr-alert-beli { border-left-color: #4ade80; }
+.rr-alert-jual { border-left-color: #f87171; }
+.rr-alert-tahan { border-left-color: #fbbf24; }
+
+/* ─ Comparison Table ─ */
+.comparison-table {
+    width: 100%;
+    border-collapse: collapse;
 }
-.rr-decision-tahan {
-    border-color: #fbbf2444 !important;
-    box-shadow: 0 0 40px #fbbf2422 !important;
-    background: radial-gradient(ellipse at 50% 0%, #fbbf2410, #0d0b07 70%) !important;
+.comparison-table th {
+    color: #d4af37;
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    padding: 0.5rem;
+    border-bottom: 1px solid #2a2010;
 }
-.decision-word-beli  { color: #4ade80; }
-.decision-word-jual  { color: #f87171; }
-.decision-word-tahan { color: #fbbf24; }
+.comparison-table td {
+    padding: 0.5rem;
+    border-bottom: 1px solid #1e1810;
+    color: #c8a96e;
+}
+.comparison-table tr:last-child td {
+    border-bottom: none;
+}
+.score-high { color: #4ade80; }
+.score-mid { color: #fbbf24; }
+.score-low { color: #f87171; }
+
+/* ─ Button ─ */
+.stButton > button {
+    background: linear-gradient(135deg, #d4af37, #a07d20) !important;
+    color: #0a0705 !important;
+    border: none !important;
+    border-radius: 2px !important;
+    font-family: 'Courier Prime', monospace !important;
+    font-weight: 700 !important;
+    letter-spacing: 0.2em !important;
+    font-size: 0.7rem !important;
+    padding: 0.4rem 1rem !important;
+    text-transform: uppercase !important;
+    box-shadow: 0 0 20px #d4af3733 !important;
+    transition: all 0.3s !important;
+}
+.stButton > button:hover {
+    box-shadow: 0 0 30px #d4af3766 !important;
+    transform: translateY(-1px) !important;
+}
 
 /* ─ Score bar ─ */
-.score-container { margin-bottom: 0.75rem; }
+.score-container { margin-bottom: 0.5rem; }
 .score-label-row {
     display: flex;
     justify-content: space-between;
-    margin-bottom: 4px;
+    margin-bottom: 2px;
 }
 .score-label {
     font-family: 'Courier Prime', monospace !important;
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     letter-spacing: 0.15em;
     color: #8b7355;
     text-transform: uppercase;
 }
-.score-value { font-weight: 700; font-family: 'Courier Prime', monospace !important; }
+.score-value { font-weight: 700; font-family: 'Courier Prime', monospace !important; font-size: 0.7rem; }
 .score-track {
-    height: 4px;
+    height: 3px;
     background: #1a1410;
     border-radius: 2px;
     overflow: hidden;
@@ -173,30 +177,6 @@ p, div, span, label { font-family: 'Courier Prime', monospace !important; }
 .score-fill {
     height: 100%;
     border-radius: 2px;
-}
-
-/* ─ Quote ─ */
-.rr-quote {
-    border-left: 2px solid #d4af37;
-    padding: 1.2rem 1.2rem 1.2rem 1.5rem;
-    background: #0d0b0788;
-    border-radius: 0 4px 4px 0;
-    margin: 1rem 0;
-}
-.rr-quote-text {
-    color: #d4af37;
-    font-family: 'Playfair Display', serif !important;
-    font-style: italic;
-    font-size: 1rem;
-    line-height: 1.8;
-}
-
-/* ─ Conviction bar ─ */
-.conviction-bar {
-    font-family: 'Courier Prime', monospace !important;
-    color: #8b7355;
-    letter-spacing: 0.15em;
-    font-size: 0.8rem;
 }
 
 /* ─ Disclaimer ─ */
@@ -210,60 +190,151 @@ p, div, span, label { font-family: 'Courier Prime', monospace !important; }
     font-family: 'Courier Prime', monospace !important;
 }
 
-/* ─ Divider ─ */
-hr { border-color: #2a2010 !important; }
-
-/* ─ Hide Streamlit branding ─ */
-#MainMenu, footer, header { visibility: hidden; }
-.stDeployButton { display: none; }
-
-/* ─ Selectbox & API input ─ */
-.stTextInput input {
-    background-color: #0d0b07 !important;
-    color: #c8a96e !important;
-    border: 1px solid #2a2010 !important;
-    border-radius: 4px !important;
-    font-family: 'Courier Prime', monospace !important;
-}
-.stTextInput input:focus {
-    border-color: #d4af3766 !important;
-}
-[data-testid="stExpander"] {
-    background: #0d0b07 !important;
-    border: 1px solid #1e1810 !important;
-    border-radius: 4px !important;
+/* ─ Alert Settings ─ */
+.alert-setting {
+    background: #0d0b07;
+    border: 1px solid #1e1810;
+    border-radius: 4px;
+    padding: 0.8rem;
+    margin-bottom: 0.8rem;
 }
 </style>
 """, unsafe_allow_html=True)
+
+# ── Data Classes ─────────────────────────────────────────────────────────────
+
+class AlertManager:
+    """Manages price alerts for stocks"""
+    
+    def __init__(self):
+        self.alerts_file = "alerts.json"
+        self.load_alerts()
+    
+    def load_alerts(self):
+        """Load alerts from file"""
+        if os.path.exists(self.alerts_file):
+            try:
+                with open(self.alerts_file, 'r') as f:
+                    self.alerts = json.load(f)
+            except:
+                self.alerts = {}
+        else:
+            self.alerts = {}
+    
+    def save_alerts(self):
+        """Save alerts to file"""
+        with open(self.alerts_file, 'w') as f:
+            json.dump(self.alerts, f)
+    
+    def add_alert(self, symbol: str, alert_type: str, target_price: float, condition: str):
+        """Add a new price alert"""
+        if symbol not in self.alerts:
+            self.alerts[symbol] = []
+        
+        alert = {
+            'id': f"{symbol}_{len(self.alerts[symbol])}_{int(time.time())}",
+            'type': alert_type,
+            'target_price': target_price,
+            'condition': condition,  # 'above' or 'below'
+            'created_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'triggered': False
+        }
+        self.alerts[symbol].append(alert)
+        self.save_alerts()
+        return alert
+    
+    def remove_alert(self, symbol: str, alert_id: str):
+        """Remove an alert"""
+        if symbol in self.alerts:
+            self.alerts[symbol] = [a for a in self.alerts[symbol] if a['id'] != alert_id]
+            if not self.alerts[symbol]:
+                del self.alerts[symbol]
+            self.save_alerts()
+    
+    def check_alerts(self, current_prices: Dict[str, float]) -> List[Dict]:
+        """Check which alerts have been triggered"""
+        triggered = []
+        
+        for symbol, alerts in self.alerts.items():
+            if symbol in current_prices:
+                price = current_prices[symbol]
+                for alert in alerts:
+                    if not alert['triggered']:
+                        condition_met = False
+                        if alert['condition'] == 'above' and price >= alert['target_price']:
+                            condition_met = True
+                        elif alert['condition'] == 'below' and price <= alert['target_price']:
+                            condition_met = True
+                        
+                        if condition_met:
+                            alert['triggered'] = True
+                            alert['triggered_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                            alert['triggered_price'] = price
+                            triggered.append(alert)
+        
+        if triggered:
+            self.save_alerts()
+        
+        return triggered
 
 # ── Helper Functions ──────────────────────────────────────────────────────────
 
 def extract_symbol(query: str) -> str:
     """Extract stock symbol from user query."""
+    query = query.upper().strip()
+    
     # Common Indonesian stocks mapping
     id_stocks = {
         'BBCA': 'BBCA.JK', 'BBRI': 'BBRI.JK', 'BMRI': 'BMRI.JK', 
         'TLKM': 'TLKM.JK', 'ASII': 'ASII.JK', 'BREN': 'BREN.JK',
-        'GOTO': 'GOTO.JK', 'BYAN': 'BYAN.JK', 'ADRO': 'ADRO.JK'
+        'GOTO': 'GOTO.JK', 'BYAN': 'BYAN.JK', 'ADRO': 'ADRO.JK',
+        'ANTM': 'ANTM.JK', 'INDF': 'INDF.JK', 'ICBP': 'ICBP.JK'
     }
     
-    # Check for exact matches in Indonesian stocks
-    query_upper = query.upper().strip()
-    if query_upper in id_stocks:
-        return id_stocks[query_upper]
+    if query in id_stocks:
+        return id_stocks[query]
     
-    # Check for common US stocks
+    # US stocks
     us_stocks = {
         'TSLA': 'TSLA', 'AAPL': 'AAPL', 'MSFT': 'MSFT',
         'GOOGL': 'GOOGL', 'AMZN': 'AMZN', 'META': 'META',
-        'BTC': 'BTC-USD', 'ETH': 'ETH-USD', 'GOLD': 'GC=F'
+        'NVDA': 'NVDA', 'JPM': 'JPM', 'V': 'V'
     }
     
-    if query_upper in us_stocks:
-        return us_stocks[query_upper]
+    if query in us_stocks:
+        return us_stocks[query]
     
-    # Default: assume it's already a valid symbol or try with .JK for Indonesian stocks
-    return query_upper if '.' in query_upper else f"{query_upper}.JK"
+    # Crypto
+    crypto = {
+        'BTC': 'BTC-USD', 'ETH': 'ETH-USD', 'BNB': 'BNB-USD',
+        'SOL': 'SOL-USD', 'XRP': 'XRP-USD'
+    }
+    
+    if query in crypto:
+        return crypto[query]
+    
+    return query if '.' in query else f"{query}.JK"
+
+@st.cache_data(ttl=300)  # Cache 5 menit
+def get_stock_data(symbol: str, period: str = "3mo") -> Optional[pd.DataFrame]:
+    """Get stock data from yfinance"""
+    try:
+        stock = yf.Ticker(symbol)
+        hist = stock.history(period=period)
+        if hist.empty:
+            return None
+        return hist
+    except:
+        return None
+
+@st.cache_data(ttl=300)
+def get_stock_info(symbol: str) -> Dict:
+    """Get stock info from yfinance"""
+    try:
+        stock = yf.Ticker(symbol)
+        return stock.info
+    except:
+        return {}
 
 def calculate_rsi(prices: pd.Series, periods: int = 14) -> float:
     """Calculate RSI indicator."""
@@ -274,60 +345,34 @@ def calculate_rsi(prices: pd.Series, periods: int = 14) -> float:
     rsi = 100 - (100 / (1 + rs))
     return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50
 
-def calculate_macd(prices: pd.Series) -> Dict[str, float]:
-    """Calculate MACD indicator."""
-    exp1 = prices.ewm(span=12, adjust=False).mean()
-    exp2 = prices.ewm(span=26, adjust=False).mean()
-    macd = exp1 - exp2
-    signal = macd.ewm(span=9, adjust=False).mean()
-    return {
-        'macd': macd.iloc[-1],
-        'signal': signal.iloc[-1],
-        'histogram': macd.iloc[-1] - signal.iloc[-1]
-    }
-
-def analyze_with_yfinance(symbol: str) -> Optional[Dict[str, Any]]:
+def analyze_stock(symbol: str) -> Optional[Dict[str, Any]]:
     """Analyze stock using yfinance data."""
     try:
-        # Download stock data
-        stock = yf.Ticker(symbol)
+        hist = get_stock_data(symbol, "6mo")
+        info = get_stock_info(symbol)
         
-        # Get info and historical data
-        info = stock.info
-        hist = stock.history(period="6mo")
-        
-        if hist.empty:
+        if hist is None or hist.empty:
             return None
         
-        # Calculate technical indicators
         current_price = hist['Close'].iloc[-1]
         prev_price = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
         
-        # Price changes
+        # Calculate indicators
         daily_change = ((current_price - prev_price) / prev_price) * 100
-        weekly_change = ((current_price - hist['Close'].iloc[-5]) / hist['Close'].iloc[-5]) * 100 if len(hist) >= 5 else 0
-        monthly_change = ((current_price - hist['Close'].iloc[-20]) / hist['Close'].iloc[-20]) * 100 if len(hist) >= 20 else 0
-        
-        # Moving averages
         ma20 = hist['Close'].rolling(window=20).mean().iloc[-1] if len(hist) >= 20 else current_price
         ma50 = hist['Close'].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else current_price
-        
-        # RSI
         rsi = calculate_rsi(hist['Close'])
-        
-        # MACD
-        macd_data = calculate_macd(hist['Close'])
         
         # Volume analysis
         avg_volume = hist['Volume'].rolling(window=20).mean().iloc[-1] if len(hist) >= 20 else hist['Volume'].mean()
         current_volume = hist['Volume'].iloc[-1]
         volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
         
-        # Scoring system (1-10 scale)
-        # Fundamental score based on PE, PB, etc
+        # Scoring
         pe = info.get('trailingPE', 15)
         pb = info.get('priceToBook', 1.5)
         
+        # Fundamental score
         if pe < 15:
             fundamental_score = 8
         elif pe < 25:
@@ -337,15 +382,14 @@ def analyze_with_yfinance(symbol: str) -> Optional[Dict[str, Any]]:
         else:
             fundamental_score = 3
             
-        # Momentum score based on price action and RSI
-        if rsi < 30:  # Oversold
+        # Momentum score
+        if rsi < 30:
             momentum_score = 8
-        elif rsi > 70:  # Overbought
+        elif rsi > 70:
             momentum_score = 4
         else:
             momentum_score = 6
             
-        # Adjust for trend
         if current_price > ma50 and current_price > ma20:
             momentum_score += 1
         elif current_price < ma50 and current_price < ma20:
@@ -361,14 +405,14 @@ def analyze_with_yfinance(symbol: str) -> Optional[Dict[str, Any]]:
         else:
             valuation_score = 4
             
-        # Catalyst score based on volume and news (simplified)
+        # Catalyst score
         catalyst_score = 5
         if volume_ratio > 1.5:
             catalyst_score += 2
         elif volume_ratio > 1.2:
             catalyst_score += 1
             
-        # Determine decision
+        # Decision
         total_score = (fundamental_score + momentum_score + valuation_score + catalyst_score) / 4
         
         if total_score >= 7:
@@ -380,103 +424,275 @@ def analyze_with_yfinance(symbol: str) -> Optional[Dict[str, Any]]:
         else:
             decision = "TAHAN"
             conviction = int(total_score)
-            
-        # Target price calculation
-        target_price = current_price * (1 + (total_score - 5) * 0.05) if total_score > 5 else current_price * 0.95
         
-        # Generate analysis text
-        company_name = info.get('longName', symbol)
-        sector = info.get('sector', 'N/A')
-        
-        kondisi_makro = f"Sektor {sector} saat ini menghadapi dinamika pasar yang kompleks. "
-        if rsi > 70:
-            kondisi_makro += "Tekanan jual mulai terlihat karena kondisi jenuh beli (overbought) di level RSI {:.1f}. ".format(rsi)
-        elif rsi < 30:
-            kondisi_makro += "Peluang akumulasi muncul karena kondisi jenuh jual (oversold) di level RSI {:.1f}. ".format(rsi)
-        else:
-            kondisi_makro += "Pasar berada dalam fase konsolidasi dengan momentum yang netral (RSI {:.1f}). ".format(rsi)
-            
-        kondisi_makro += f"Volume perdagangan {'meningkat' if volume_ratio > 1.2 else 'menurun'} {volume_ratio:.1f}x dari rata-rata."
-        
-        peluang_tersembunyi = f"Valuasi PB {pb:.2f}x tergolong {'murah' if pb < 1.5 else 'wajar' if pb < 3 else 'premium'}. "
-        if pe < 20:
-            peluang_tersembunyi += f"PER {pe:.1f}x masih menarik dibandingkan rata-rata historis. "
-        if volume_ratio > 1.3:
-            peluang_tersembunyi += "Ada peningkatan volume signifikan yang mengindikasikan minat institusional. "
-            
-        risiko_utama = f"Resistance teknikal di level Rp{ma50:.0f} (MA50) perlu ditembus untuk kelanjutan tren. "
-        if rsi > 70:
-            risiko_utama += "Koreksi jangka pendek sangat mungkin terjadi karena kondisi overbought. "
-        elif rsi < 30:
-            risiko_utama += "Pelemahan masih berpotensi berlanjut meski sudah oversold. "
-            
-        strategi_masuk = f"Entry ideal di kisaran Rp{current_price*0.97:.0f}-Rp{current_price:.0f} "
-        if decision == "BELI":
-            strategi_masuk += "dengan akumulasi bertahap (DCA). "
-        elif decision == "JUAL":
-            strategi_masuk += "untuk cut loss, exit di level Rp{current_price*0.95:.0f} jika breakdown. "
-        else:
-            strategi_masuk += "sambil wait and see hingga konfirmasi breakout/breakdown. "
-            
-        target_harga = f"Target harga 6-12 bulan: Rp{target_price:.0f}"
-        if decision == "BELI":
-            target_harga += f" (potensi upside {((target_price/current_price)-1)*100:.1f}%)"
-            
-        # Filosofi quotes
-        filosofi_quotes = {
-            "BELI": "Ketika ketakutan menguasai pasar, di sanalah harta karun tersembunyi. Jangan ikut arus, belilah saat darah mengalir di jalanan.",
-            "JUAL": "Keserakahan adalah lawan terburuk investor. Ketika semua orang terbuai mimpi, saatnya mengambil keuntungan dan pergi.",
-            "TAHAN": "Orang bijak tahu kapan harus diam. Dalam ketidakpastian, bertahan adalah strategi terbaik."
-        }
+        target_price = current_price * (1 + (total_score - 5) * 0.05)
         
         return {
-            "keputusan": decision,
+            "symbol": symbol,
+            "name": info.get('longName', symbol),
+            "current_price": current_price,
+            "daily_change": daily_change,
+            "decision": decision,
             "conviction": conviction,
-            "ringkasan": f"{company_name} menunjukkan prospek {'positif' if decision == 'BELI' else 'negatif' if decision == 'JUAL' else 'netral'} dengan conviction {conviction}/10.",
-            "kondisi_makro": kondisi_makro,
-            "peluang_tersembunyi": peluang_tersembunyi,
-            "risiko_utama": risiko_utama,
-            "strategi_masuk": strategi_masuk,
-            "target_harga": target_harga,
-            "filosofi": filosofi_quotes.get(decision, filosofi_quotes["TAHAN"]),
-            "skor": {
+            "total_score": total_score,
+            "scores": {
                 "fundamental": min(10, max(1, int(fundamental_score))),
                 "momentum": min(10, max(1, int(momentum_score))),
                 "valuasi": min(10, max(1, int(valuation_score))),
                 "katalis": min(10, max(1, int(catalyst_score)))
             },
-            "company_name": company_name,
-            "current_price": current_price,
-            "daily_change": daily_change
+            "rsi": rsi,
+            "ma20": ma20,
+            "ma50": ma50,
+            "volume_ratio": volume_ratio,
+            "target_price": target_price,
+            "pe": pe,
+            "pb": pb,
+            "sector": info.get('sector', 'N/A')
         }
         
     except Exception as e:
         st.error(f"Error analyzing {symbol}: {str(e)}")
         return None
 
-def score_color(val: int) -> str:
-    if val >= 7: return "#d4af37"
-    if val >= 5: return "#c8a96e"
-    return "#8b7355"
+def create_comparison_chart(analyses: List[Dict]):
+    """Create comparison chart for multiple stocks"""
+    if not analyses:
+        return None
+    
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=('Skor Analisis', 'Konviction Level', 'RSI vs Target', 'Valuasi (PE/PB)'),
+        specs=[[{'type': 'bar'}, {'type': 'bar'}],
+               [{'type': 'scatter'}, {'type': 'bar'}]]
+    )
+    
+    symbols = [a['symbol'] for a in analyses]
+    
+    # Skor analisis
+    for score_type in ['fundamental', 'momentum', 'valuasi', 'katalis']:
+        scores = [a['scores'][score_type] for a in analyses]
+        fig.add_trace(
+            go.Bar(name=score_type.capitalize(), x=symbols, y=scores, text=scores, textposition='auto'),
+            row=1, col=1
+        )
+    
+    # Conviction
+    convictions = [a['conviction'] for a in analyses]
+    colors = ['#4ade80' if a['decision'] == 'BELI' else '#f87171' if a['decision'] == 'JUAL' else '#fbbf24' for a in analyses]
+    fig.add_trace(
+        go.Bar(name='Conviction', x=symbols, y=convictions, text=convictions, textposition='auto',
+               marker_color=colors),
+        row=1, col=2
+    )
+    
+    # RSI vs Target
+    rsi_values = [a['rsi'] for a in analyses]
+    target_pct = [((a['target_price']/a['current_price'])-1)*100 for a in analyses]
+    
+    fig.add_trace(
+        go.Scatter(name='RSI', x=symbols, y=rsi_values, mode='lines+markers',
+                  line=dict(color='#d4af37', width=2)),
+        row=2, col=1
+    )
+    fig.add_trace(
+        go.Scatter(name='Target %', x=symbols, y=target_pct, mode='lines+markers',
+                  line=dict(color='#4ade80', width=2)),
+        row=2, col=1
+    )
+    
+    # Horizontal lines for RSI levels
+    fig.add_hline(y=70, line_dash="dash", line_color="#f87171", opacity=0.5, row=2, col=1)
+    fig.add_hline(y=30, line_dash="dash", line_color="#4ade80", opacity=0.5, row=2, col=1)
+    
+    # PE/PB comparison
+    pe_values = [a['pe'] for a in analyses]
+    pb_values = [a['pb'] for a in analyses]
+    
+    fig.add_trace(
+        go.Bar(name='PE Ratio', x=symbols, y=pe_values, text=[f"{v:.1f}" for v in pe_values], textposition='auto'),
+        row=2, col=2
+    )
+    fig.add_trace(
+        go.Bar(name='PB Ratio', x=symbols, y=pb_values, text=[f"{v:.2f}" for v in pb_values], textposition='auto'),
+        row=2, col=2
+    )
+    
+    fig.update_layout(
+        height=600,
+        showlegend=True,
+        paper_bgcolor='#0d0b07',
+        plot_bgcolor='#0d0b07',
+        font=dict(color='#c8a96e', family='Courier Prime'),
+        legend=dict(font=dict(size=10))
+    )
+    
+    fig.update_xaxes(gridcolor='#2a2010', gridwidth=1)
+    fig.update_yaxes(gridcolor='#2a2010', gridwidth=1)
+    
+    return fig
 
+def render_comparison_table(analyses: List[Dict]):
+    """Render comparison table for multiple stocks"""
+    if not analyses:
+        return
+    
+    html = """
+    <table class="comparison-table">
+        <tr>
+            <th>Saham</th>
+            <th>Harga</th>
+            <th>Change</th>
+            <th>Keputusan</th>
+            <th>Conviction</th>
+            <th>RSI</th>
+            <th>vs MA20</th>
+            <th>vs MA50</th>
+            <th>Target</th>
+        </tr>
+    """
+    
+    for a in analyses:
+        decision_color = "#4ade80" if a['decision'] == 'BELI' else "#f87171" if a['decision'] == 'JUAL' else "#fbbf24"
+        change_color = "#4ade80" if a['daily_change'] >= 0 else "#f87171"
+        change_sign = "+" if a['daily_change'] >= 0 else ""
+        
+        ma20_status = "↑" if a['current_price'] > a['ma20'] else "↓"
+        ma20_color = "#4ade80" if a['current_price'] > a['ma20'] else "#f87171"
+        
+        ma50_status = "↑" if a['current_price'] > a['ma50'] else "↓"
+        ma50_color = "#4ade80" if a['current_price'] > a['ma50'] else "#f87171"
+        
+        rsi_color = "#4ade80" if a['rsi'] < 30 else "#f87171" if a['rsi'] > 70 else "#fbbf24"
+        
+        html += f"""
+        <tr>
+            <td><strong>{a['symbol']}</strong><br><span style="font-size:0.6rem;color:#5c4a2a;">{a['name'][:20]}</span></td>
+            <td>Rp{a['current_price']:,.0f}</td>
+            <td style="color:{change_color};">{change_sign}{a['daily_change']:.1f}%</td>
+            <td style="color:{decision_color};font-weight:700;">{a['decision']}</td>
+            <td>{a['conviction']}/10</td>
+            <td style="color:{rsi_color};">{a['rsi']:.1f}</td>
+            <td style="color:{ma20_color};">{ma20_status} Rp{a['ma20']:,.0f}</td>
+            <td style="color:{ma50_color};">{ma50_status} Rp{a['ma50']:,.0f}</td>
+            <td>Rp{a['target_price']:,.0f}</td>
+        </tr>
+        """
+    
+    html += "</table>"
+    st.markdown(html, unsafe_allow_html=True)
 
-def render_score_bar(label: str, value: int):
-    color = score_color(value)
-    pct = value * 10
-    st.markdown(f"""
-    <div class="score-container">
-        <div class="score-label-row">
-            <span class="score-label">{label}</span>
-            <span class="score-value" style="color:{color};">{value}/10</span>
-        </div>
-        <div class="score-track">
-            <div class="score-fill" style="width:{pct}%;background:linear-gradient(90deg,{color}88,{color});box-shadow:0 0 8px {color}66;"></div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+def render_alert_ui(alert_manager: AlertManager, symbol: str, current_price: float):
+    """Render alert creation UI"""
+    with st.expander(f"🔔 Set Alert untuk {symbol}", expanded=False):
+        col1, col2, col3 = st.columns([2,2,1])
+        
+        with col1:
+            alert_type = st.selectbox(
+                "Tipe Alert",
+                ["Harga", "RSI", "Volume"],
+                key=f"alert_type_{symbol}"
+            )
+        
+        with col2:
+            if alert_type == "Harga":
+                condition = st.selectbox("Kondisi", ["Di atas", "Di bawah"], key=f"cond_{symbol}")
+                target_price = st.number_input(
+                    "Target Harga",
+                    min_value=0.0,
+                    value=float(current_price * 1.1),
+                    step=100.0,
+                    key=f"price_{symbol}"
+                )
+            elif alert_type == "RSI":
+                condition = st.selectbox("Kondisi", ["Di atas", "Di bawah"], key=f"cond_{symbol}")
+                target_price = st.number_input(
+                    "Target RSI",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=70.0,
+                    step=5.0,
+                    key=f"rsi_{symbol}"
+                )
+            else:  # Volume
+                condition = "Di atas"
+                target_price = st.number_input(
+                    "Target Volume (x rata-rata)",
+                    min_value=1.0,
+                    value=2.0,
+                    step=0.5,
+                    key=f"vol_{symbol}"
+                )
+        
+        with col3:
+            st.write("")  # Spacer
+            st.write("")  # Spacer
+            if st.button("✅ Set", key=f"set_alert_{symbol}"):
+                alert_manager.add_alert(
+                    symbol=symbol,
+                    alert_type=alert_type,
+                    target_price=target_price,
+                    condition='above' if condition == "Di atas" else 'below'
+                )
+                st.success(f"Alert untuk {symbol} telah diset!")
+                time.sleep(1)
+                st.rerun()
+    
+    # Show existing alerts for this symbol
+    if symbol in alert_manager.alerts:
+        st.markdown("**Alert Aktif:**")
+        for alert in alert_manager.alerts[symbol]:
+            if not alert['triggered']:
+                col1, col2 = st.columns([4,1])
+                with col1:
+                    st.markdown(
+                        f"<div class='rr-alert'>"
+                        f"<span style='color:#d4af37;'>{alert['type']}</span>: "
+                        f"{alert['condition']} {alert['target_price']:,.0f} "
+                        f"<span style='color:#5c4a2a;font-size:0.6rem;'>({alert['created_at']})</span>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                with col2:
+                    if st.button("❌", key=f"del_{alert['id']}"):
+                        alert_manager.remove_alert(symbol, alert['id'])
+                        st.rerun()
 
+def render_alert_dashboard(alert_manager: AlertManager, current_prices: Dict[str, float]):
+    """Render alert dashboard in sidebar"""
+    st.sidebar.markdown("## 🔔 Dashboard Alert")
+    
+    # Check for triggered alerts
+    triggered = alert_manager.check_alerts(current_prices)
+    
+    if triggered:
+        st.sidebar.markdown("### ⚡ Alert Terpicu!")
+        for alert in triggered:
+            alert_class = "rr-alert-beli" if alert['condition'] == 'above' else "rr-alert-jual"
+            st.sidebar.markdown(
+                f"<div class='rr-alert {alert_class}'>"
+                f"<strong>{alert['id'].split('_')[0]}</strong><br>"
+                f"{alert['type']} {alert['condition']} {alert['target_price']:,.0f}<br>"
+                f"Harga sekarang: {alert['triggered_price']:,.0f}<br>"
+                f"<span style='font-size:0.6rem;'>{alert['triggered_at']}</span>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        
+        if st.sidebar.button("Bersihkan Alert", key="clear_alerts"):
+            for symbol in list(alert_manager.alerts.keys()):
+                alert_manager.alerts[symbol] = [a for a in alert_manager.alerts[symbol] if not a['triggered']]
+                if not alert_manager.alerts[symbol]:
+                    del alert_manager.alerts[symbol]
+            alert_manager.save_alerts()
+            st.rerun()
+    
+    # Show active alerts count
+    active_count = sum(len([a for a in alerts if not a['triggered']]) 
+                      for alerts in alert_manager.alerts.values())
+    st.sidebar.markdown(f"**Alert Aktif:** {active_count}")
 
-# ── UI ────────────────────────────────────────────────────────────────────────
+# ── UI Components ────────────────────────────────────────────────────────────
 
 def render_header():
     st.markdown("""
@@ -487,227 +703,246 @@ def render_header():
     </div>
     """, unsafe_allow_html=True)
 
-
-def render_result(result: dict):
-    keputusan = result.get("keputusan", "TAHAN").upper()
-    conviction = result.get("conviction", 5)
-    css_class = f"rr-decision-{keputusan.lower()}"
-    word_class = f"decision-word-{keputusan.lower()}"
-
-    filled = "▮" * conviction
-    empty  = "▯" * (10 - conviction)
-
-    # Show current price info
-    current_price = result.get('current_price', 0)
-    daily_change = result.get('daily_change', 0)
-    change_color = "#4ade80" if daily_change >= 0 else "#f87171"
-    change_sign = "+" if daily_change >= 0 else ""
-
-    # ── Decision Banner ─────────────────────────────────────────────────────
-    st.markdown(f"""
-    <div class="rr-card {css_class}" style="text-align:center;padding:2rem 1.5rem;">
-        <div class="rr-card-label">KEPUTUSAN FINAL</div>
-        <div style="font-family:'Courier Prime',monospace; color:#8b7355; font-size:0.9rem; margin-bottom:0.5rem;">
-            {result.get('company_name', '')} | Rp{current_price:,.0f} 
-            <span style="color:{change_color};">({change_sign}{daily_change:.2f}%)</span>
-        </div>
-        <div class="{word_class}" style="font-family:'Playfair Display',serif;font-size:clamp(2.5rem,8vw,4rem);font-weight:700;letter-spacing:0.1em;">
-            {keputusan}
-        </div>
-        <div class="conviction-bar" style="margin:0.5rem 0 1rem;">
-            CONVICTION {conviction}/10 — {filled}{empty}
-        </div>
-        <div class="rr-card-body" style="font-style:italic;max-width:580px;margin:0 auto;">
-            {result.get("ringkasan", "")}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── 2-column cards ───────────────────────────────────────────────────────
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(f"""
-        <div class="rr-card">
-            <div class="rr-card-label" style="color:#6ba3d6;">🌐 KONDISI MAKRO</div>
-            <div class="rr-card-body">{result.get("kondisi_makro","")}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="rr-card">
-            <div class="rr-card-label" style="color:#f87171;">⚠ RISIKO UTAMA</div>
-            <div class="rr-card-body">{result.get("risiko_utama","")}</div>
-        </div>
-        """, unsafe_allow_html=True)
-    with col2:
-        st.markdown(f"""
-        <div class="rr-card">
-            <div class="rr-card-label" style="color:#d4af37;">👁 PELUANG TERSEMBUNYI</div>
-            <div class="rr-card-body">{result.get("peluang_tersembunyi","")}</div>
-        </div>
-        """, unsafe_allow_html=True)
-        st.markdown(f"""
-        <div class="rr-card">
-            <div class="rr-card-label" style="color:#4ade80;">📈 TARGET HARGA</div>
-            <div class="rr-card-body">{result.get("target_harga","")}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # ── Strategi Masuk ───────────────────────────────────────────────────────
-    st.markdown(f"""
-    <div class="rr-card">
-        <div class="rr-card-label">🎯 STRATEGI MASUK</div>
-        <div class="rr-card-body">{result.get("strategi_masuk","")}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Score Matrix ─────────────────────────────────────────────────────────
-    st.markdown("""
-    <div class="rr-card">
-        <div class="rr-card-label">📊 MATRIX PENILAIAN</div>
-    """, unsafe_allow_html=True)
-    skor = result.get("skor", {})
-    render_score_bar("Fundamental", skor.get("fundamental", 5))
-    render_score_bar("Momentum Pasar", skor.get("momentum", 5))
-    render_score_bar("Valuasi", skor.get("valuasi", 5))
-    render_score_bar("Kekuatan Katalis", skor.get("katalis", 5))
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # ── Filosofi Quote ───────────────────────────────────────────────────────
-    st.markdown(f"""
-    <div class="rr-quote">
-        <div class="rr-card-label">💬 FILOSOFI INVESTASI</div>
-        <div class="rr-quote-text">"{result.get("filosofi","")}"</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Disclaimer ───────────────────────────────────────────────────────────
-    st.markdown("""
-    <div class="rr-disclaimer">
-        ⚠ Analisis ini bersifat edukatif dan tidak merupakan saran investasi resmi.<br>
-        Selalu lakukan riset mandiri dan konsultasikan dengan advisor keuangan profesional.
-    </div>
-    """, unsafe_allow_html=True)
-
-
-def render_empty_state():
-    st.markdown("""
-    <div style="text-align:center;padding:3rem 1rem;color:#3d2e15;
-                font-style:italic;line-height:2.2;font-family:'Playfair Display',serif;font-size:1rem;">
-        "Yang membedakan investor biasa dengan yang luar biasa<br>
-        bukan seberapa banyak yang mereka tahu —<br>
-        tapi seberapa cepat mereka melihat apa yang belum terlihat."
-    </div>
-    """, unsafe_allow_html=True)
-
-
-# ── Main App ──────────────────────────────────────────────────────────────────
+# ── Main App ─────────────────────────────────────────────────────────────────
 
 def main():
     render_header()
     
-    # Add info that we're using yfinance
-    st.markdown("""
-    <div style="text-align:center; margin-bottom:1rem;">
-        <span style="background:#1a1410; color:#d4af37; padding:0.2rem 1rem; border-radius:20px; font-size:0.7rem;">
-            📊 Real-time data dari Yahoo Finance
-        </span>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Input area
-    st.markdown('<div class="rr-card-label" style="padding:0 0 0.4rem;">TARGET ANALISIS</div>', unsafe_allow_html=True)
-    query = st.text_area(
-        label="target",
-        label_visibility="collapsed",
-        placeholder="Contoh: BBCA, Tesla TSLA, Bitcoin BTC, Emas, BREN...",
-        height=90,
-        key="query_input"
-    )
-
-    # Example buttons
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        if st.button("🇮🇩 BBCA", use_container_width=True):
-            st.session_state.query_input = "BBCA"
-    with col2:
-        if st.button("🇺🇸 TSLA", use_container_width=True):
-            st.session_state.query_input = "TSLA"
-    with col3:
-        if st.button("₿ BTC", use_container_width=True):
-            st.session_state.query_input = "BTC"
-    with col4:
-        if st.button("🏦 BREN", use_container_width=True):
-            st.session_state.query_input = "BREN"
-
-    analyze_btn = st.button("▶  ANALISIS SEKARANG", use_container_width=True)
-
-    st.markdown("<hr>", unsafe_allow_html=True)
-
-    if analyze_btn:
-        if not query.strip():
-            st.warning("Masukkan nama saham atau instrumen investasi terlebih dahulu.")
-            return
-
-        # Extract symbol and analyze
-        with st.spinner("🔍 Mengambil data pasar real-time..."):
-            symbol = extract_symbol(query.strip())
-            
-            phases = [
-                f"🔍 Memindai data {symbol}...",
-                "📡 Membaca pola teknikal...",
-                "🧮 Menghitung indikator dan probabilitas...",
-                "⚡ Menyusun keputusan final..."
-            ]
-            status_placeholder = st.empty()
-            for i, phase_text in enumerate(phases):
-                status_placeholder.info(phase_text)
-                if i < len(phases) - 1:
-                    time.sleep(0.1)
-
-            try:
-                result = analyze_with_yfinance(symbol)
-                status_placeholder.empty()
-                
-                if result:
-                    render_result(result)
-
-                    # Simpan ke history session
-                    if "history" not in st.session_state:
-                        st.session_state["history"] = []
-                    st.session_state["history"].insert(0, {
-                        "query": query.strip(),
-                        "symbol": symbol,
-                        "keputusan": result.get("keputusan"),
-                        "conviction": result.get("conviction"),
-                        "ringkasan": result.get("ringkasan", "")[:100] + "..."
-                    })
-                else:
-                    st.error(f"⚠ Tidak dapat menemukan data untuk '{query}'. Coba gunakan kode saham yang valid (contoh: BBCA.JK untuk Indonesia, TSLA untuk US).")
-
-            except Exception as e:
-                status_placeholder.empty()
-                st.error(f"⚠ Error: {str(e)}")
+    # Initialize alert manager
+    if 'alert_manager' not in st.session_state:
+        st.session_state.alert_manager = AlertManager()
+    
+    # Sidebar for alerts
+    with st.sidebar:
+        st.markdown("## 📊 Menu Utama")
+        app_mode = st.radio(
+            "Pilih Mode",
+            ["🔍 Single Analysis", "📊 Multi Comparison", "🔔 Alert Manager"],
+            label_visibility="collapsed"
+        )
+        
+        st.markdown("---")
+    
+    if app_mode == "🔍 Single Analysis":
+        render_single_analysis()
+    elif app_mode == "📊 Multi Comparison":
+        render_multi_comparison()
     else:
-        # History sidebar
-        if st.session_state.get("history"):
-            with st.sidebar:
-                st.markdown('<div class="rr-card-label" style="color:#5c4a2a;">RIWAYAT ANALISIS</div>', unsafe_allow_html=True)
-                for item in st.session_state["history"][:10]:
-                    keputusan = item["keputusan"]
-                    color = "#4ade80" if keputusan == "BELI" else "#f87171" if keputusan == "JUAL" else "#fbbf24"
+        render_alert_manager_view()
+
+def render_single_analysis():
+    """Render single stock analysis view"""
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        query = st.text_input(
+            "Masukkan Kode Saham",
+            placeholder="Contoh: BBCA, TSLA, BTC, BREN",
+            key="single_query"
+        )
+    
+    with col2:
+        analyze_btn = st.button("🔍 Analisis", use_container_width=True)
+    
+    if analyze_btn and query:
+        symbol = extract_symbol(query)
+        
+        with st.spinner(f"Menganalisis {symbol}..."):
+            analysis = analyze_stock(symbol)
+            
+            if analysis:
+                # Get current price for alerts
+                current_prices = {symbol: analysis['current_price']}
+                
+                # Check alerts
+                render_alert_dashboard(st.session_state.alert_manager, current_prices)
+                
+                # Render analysis
+                col_left, col_right = st.columns([2, 1])
+                
+                with col_left:
+                    # Decision card
+                    decision_color = "#4ade80" if analysis['decision'] == 'BELI' else "#f87171" if analysis['decision'] == 'JUAL' else "#fbbf24"
                     st.markdown(f"""
-                    <div class="rr-card" style="margin-bottom:0.5rem;padding:0.75rem 1rem;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
-                            <strong style="color:#c8a96e;font-size:0.85rem;">{item['query']}</strong>
-                            <span style="color:{color};font-weight:700;font-size:0.75rem;">{keputusan}</span>
+                    <div class="rr-card" style="border-color:{decision_color}44;">
+                        <div class="rr-card-label">KEPUTUSAN FINAL</div>
+                        <div style="display:flex; align-items:center; gap:2rem;">
+                            <div style="font-size:3rem; color:{decision_color};">{analysis['decision']}</div>
+                            <div>
+                                <div style="color:#d4af37;">{analysis['name']}</div>
+                                <div style="font-size:1.5rem;">Rp{analysis['current_price']:,.0f}</div>
+                                <div style="color:{'#4ade80' if analysis['daily_change']>=0 else '#f87171'};">
+                                    {analysis['daily_change']:+.2f}%
+                                </div>
+                            </div>
                         </div>
-                        <div style="color:#5c4a2a;font-size:0.65rem;">Conviction: {item['conviction']}/10</div>
-                        <div style="color:#3d2e15;font-size:0.6rem;">{item.get('symbol', '')}</div>
                     </div>
                     """, unsafe_allow_html=True)
-        else:
-            render_empty_state()
+                
+                with col_right:
+                    render_alert_ui(st.session_state.alert_manager, symbol, analysis['current_price'])
+                
+                # Metrics
+                mcol1, mcol2, mcol3, mcol4 = st.columns(4)
+                with mcol1:
+                    st.metric("Conviction", f"{analysis['conviction']}/10")
+                with mcol2:
+                    st.metric("RSI", f"{analysis['rsi']:.1f}")
+                with mcol3:
+                    st.metric("Volume Ratio", f"{analysis['volume_ratio']:.2f}x")
+                with mcol4:
+                    st.metric("Target", f"Rp{analysis['target_price']:,.0f}")
+                
+                # Scores
+                st.markdown("### 📊 Skor Analisis")
+                for score_name, score_value in analysis['scores'].items():
+                    score_pct = score_value * 10
+                    score_color = "#4ade80" if score_value >= 7 else "#fbbf24" if score_value >= 5 else "#f87171"
+                    st.markdown(f"""
+                    <div class="score-container">
+                        <div class="score-label-row">
+                            <span class="score-label">{score_name.upper()}</span>
+                            <span class="score-value" style="color:{score_color};">{score_value}/10</span>
+                        </div>
+                        <div class="score-track">
+                            <div class="score-fill" style="width:{score_pct}%;background:{score_color};"></div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+            else:
+                st.error(f"Tidak dapat menemukan data untuk {symbol}")
+    
+    else:
+        # Show quick picks
+        st.markdown("### 🔥 Pilihan Cepat")
+        quick_picks = ["BBCA", "BBRI", "TSLA", "BTC", "BREN", "AAPL"]
+        cols = st.columns(len(quick_picks))
+        for i, pick in enumerate(quick_picks):
+            with cols[i]:
+                if st.button(pick, use_container_width=True):
+                    st.session_state.single_query = pick
+                    st.rerun()
 
+def render_multi_comparison():
+    """Render multi-stock comparison view"""
+    st.markdown("## 📊 Perbandingan Multi-Saham")
+    
+    # Initialize comparison list
+    if 'compare_symbols' not in st.session_state:
+        st.session_state.compare_symbols = ['BBCA.JK', 'BBRI.JK', 'BMRI.JK']
+    
+    # Symbol input
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        new_symbol = st.text_input("Tambah Saham", placeholder="Contoh: TSLA, BBCA, BTC")
+    with col2:
+        if st.button("➕ Tambah", use_container_width=True) and new_symbol:
+            symbol = extract_symbol(new_symbol)
+            if symbol not in st.session_state.compare_symbols:
+                st.session_state.compare_symbols.append(symbol)
+                st.rerun()
+    
+    # Display current symbols
+    st.markdown("**Saham yang dibandingkan:**")
+    cols = st.columns(len(st.session_state.compare_symbols))
+    for i, symbol in enumerate(st.session_state.compare_symbols):
+        with cols[i]:
+            st.markdown(f"• {symbol}")
+            if st.button("❌", key=f"remove_{symbol}"):
+                st.session_state.compare_symbols.remove(symbol)
+                st.rerun()
+    
+    if st.button("🔄 Bandingkan Sekarang", use_container_width=True):
+        with st.spinner("Menganalisis semua saham..."):
+            analyses = []
+            current_prices = {}
+            
+            for symbol in st.session_state.compare_symbols:
+                analysis = analyze_stock(symbol)
+                if analysis:
+                    analyses.append(analysis)
+                    current_prices[symbol] = analysis['current_price']
+            
+            if analyses:
+                # Check alerts
+                render_alert_dashboard(st.session_state.alert_manager, current_prices)
+                
+                # Comparison table
+                st.markdown("### 📋 Tabel Perbandingan")
+                render_comparison_table(analyses)
+                
+                # Comparison chart
+                st.markdown("### 📈 Visualisasi Perbandingan")
+                fig = create_comparison_chart(analyses)
+                if fig:
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Recommendation matrix
+                st.markdown("### 🎯 Rekomendasi")
+                cols = st.columns(len(analyses))
+                for i, analysis in enumerate(analyses):
+                    with cols[i]:
+                        decision_color = "#4ade80" if analysis['decision'] == 'BELI' else "#f87171" if analysis['decision'] == 'JUAL' else "#fbbf24"
+                        st.markdown(f"""
+                        <div class="rr-card" style="text-align:center; border-color:{decision_color}44;">
+                            <div style="font-size:1.2rem; color:{decision_color};">{analysis['symbol']}</div>
+                            <div style="font-size:1.5rem; margin:0.5rem 0;">{analysis['decision']}</div>
+                            <div>Conviction: {analysis['conviction']}/10</div>
+                            <div style="font-size:0.8rem; color:#5c4a2a;">{analysis['name'][:30]}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+            else:
+                st.error("Tidak dapat menganalisis saham-saham tersebut")
+
+def render_alert_manager_view():
+    """Render alert manager view"""
+    st.markdown("## 🔔 Alert Manager")
+    
+    alert_manager = st.session_state.alert_manager
+    
+    # Show all active alerts
+    st.markdown("### 📋 Semua Alert Aktif")
+    
+    has_alerts = False
+    for symbol, alerts in alert_manager.alerts.items():
+        active_alerts = [a for a in alerts if not a['triggered']]
+        if active_alerts:
+            has_alerts = True
+            with st.expander(f"📊 {symbol} ({len(active_alerts)} alert)", expanded=True):
+                for alert in active_alerts:
+                    col1, col2, col3 = st.columns([2,2,1])
+                    with col1:
+                        st.markdown(f"**{alert['type']}**")
+                    with col2:
+                        st.markdown(f"{alert['condition']} {alert['target_price']:,.0f}")
+                    with col3:
+                        if st.button("Hapus", key=f"del_alert_{alert['id']}"):
+                            alert_manager.remove_alert(symbol, alert['id'])
+                            st.rerun()
+    
+    if not has_alerts:
+        st.info("Belum ada alert aktif. Buat alert baru di halaman Single Analysis.")
+    
+    # Show alert history
+    st.markdown("---")
+    st.markdown("### 📜 Riwayat Alert Terpicu")
+    
+    triggered_alerts = []
+    for symbol, alerts in alert_manager.alerts.items():
+        triggered_alerts.extend([a for a in alerts if a.get('triggered', False)])
+    
+    if triggered_alerts:
+        for alert in triggered_alerts[-10:]:  # Last 10
+            st.markdown(f"""
+            <div class="rr-alert">
+                <strong>{alert['id'].split('_')[0]}</strong> - {alert['type']}<br>
+                Target: {alert['target_price']:,.0f} | Terpicu: {alert.get('triggered_price', 0):,.0f}<br>
+                <span style="font-size:0.6rem;">{alert.get('triggered_at', '')}</span>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("Belum ada alert yang terpicu.")
 
 if __name__ == "__main__":
     main()
