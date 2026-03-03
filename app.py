@@ -1,9 +1,11 @@
 import streamlit as st
-import anthropic
-import json
+import yfinance as yf
+import pandas as pd
+import numpy as np
 import re
 import time
-from typing import Optional
+from typing import Optional, Dict, Any
+from datetime import datetime, timedelta
 
 # ── Page Config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -234,46 +236,223 @@ hr { border-color: #2a2010 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── System Prompt ──────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """Kamu adalah analis saham dengan pola pikir seperti karakter utama drama "Reborn Rich" — seseorang yang memiliki visi jauh ke depan, membaca siklus pasar secara mendalam, dan membuat keputusan investasi yang tegas dan berani.
-
-Gaya analisismu:
-1. Visi Makro: Baca kondisi ekonomi global & lokal saat ini — siklus suku bunga, inflasi, geopolitik
-2. Oportunis Tajam: Temukan peluang yang BELUM dilihat investor awam — aset undervalued, katalis tersembunyi
-3. Manajemen Risiko: Tetap waspada, tahu kapan harus mundur — modal yang dilindungi adalah modal yang bisa bertarung lagi
-4. Keputusan Tegas: Jangan ragu-ragu — berikan rekomendasi BELI / TAHAN / JUAL dengan keyakinan dan alasan kuat
-5. Timing: Kapan masuk, kapan keluar — momentum dan katalis jangka pendek vs fundamental jangka panjang
-
-Gunakan web search untuk mendapatkan data terkini sebelum memberikan analisis.
-
-Format responsmu HARUS dalam JSON berikut (tanpa markdown backticks, langsung JSON murni):
-{
-  "keputusan": "BELI" atau "TAHAN" atau "JUAL",
-  "conviction": angka 1 sampai 10,
-  "ringkasan": "1-2 kalimat executive summary dari perspektif seorang visioner",
-  "kondisi_makro": "Analisis kondisi ekonomi makro yang relevan saat ini",
-  "peluang_tersembunyi": "Peluang yang belum banyak disadari pasar — katalis asimetris",
-  "risiko_utama": "Risiko terbesar yang perlu diwaspadai",
-  "strategi_masuk": "Kapan dan bagaimana cara masuk posisi secara ideal",
-  "target_harga": "Estimasi target harga atau range dalam 6-12 bulan",
-  "filosofi": "Kutipan atau prinsip investasi bergaya Reborn Rich yang relevan dengan situasi ini",
-  "skor": {
-    "fundamental": angka 1 sampai 10,
-    "momentum": angka 1 sampai 10,
-    "valuasi": angka 1 sampai 10,
-    "katalis": angka 1 sampai 10
-  }
-}"""
-
 # ── Helper Functions ──────────────────────────────────────────────────────────
 
-def get_api_key() -> Optional[str]:
-    """Get API key from Streamlit secrets or session state."""
-    try:
-        return st.secrets["ANTHROPIC_API_KEY"]
-    except Exception:
-        return st.session_state.get("api_key", "")
+def extract_symbol(query: str) -> str:
+    """Extract stock symbol from user query."""
+    # Common Indonesian stocks mapping
+    id_stocks = {
+        'BBCA': 'BBCA.JK', 'BBRI': 'BBRI.JK', 'BMRI': 'BMRI.JK', 
+        'TLKM': 'TLKM.JK', 'ASII': 'ASII.JK', 'BREN': 'BREN.JK',
+        'GOTO': 'GOTO.JK', 'BYAN': 'BYAN.JK', 'ADRO': 'ADRO.JK'
+    }
+    
+    # Check for exact matches in Indonesian stocks
+    query_upper = query.upper().strip()
+    if query_upper in id_stocks:
+        return id_stocks[query_upper]
+    
+    # Check for common US stocks
+    us_stocks = {
+        'TSLA': 'TSLA', 'AAPL': 'AAPL', 'MSFT': 'MSFT',
+        'GOOGL': 'GOOGL', 'AMZN': 'AMZN', 'META': 'META',
+        'BTC': 'BTC-USD', 'ETH': 'ETH-USD', 'GOLD': 'GC=F'
+    }
+    
+    if query_upper in us_stocks:
+        return us_stocks[query_upper]
+    
+    # Default: assume it's already a valid symbol or try with .JK for Indonesian stocks
+    return query_upper if '.' in query_upper else f"{query_upper}.JK"
 
+def calculate_rsi(prices: pd.Series, periods: int = 14) -> float:
+    """Calculate RSI indicator."""
+    delta = prices.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=periods).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.iloc[-1] if not pd.isna(rsi.iloc[-1]) else 50
+
+def calculate_macd(prices: pd.Series) -> Dict[str, float]:
+    """Calculate MACD indicator."""
+    exp1 = prices.ewm(span=12, adjust=False).mean()
+    exp2 = prices.ewm(span=26, adjust=False).mean()
+    macd = exp1 - exp2
+    signal = macd.ewm(span=9, adjust=False).mean()
+    return {
+        'macd': macd.iloc[-1],
+        'signal': signal.iloc[-1],
+        'histogram': macd.iloc[-1] - signal.iloc[-1]
+    }
+
+def analyze_with_yfinance(symbol: str) -> Optional[Dict[str, Any]]:
+    """Analyze stock using yfinance data."""
+    try:
+        # Download stock data
+        stock = yf.Ticker(symbol)
+        
+        # Get info and historical data
+        info = stock.info
+        hist = stock.history(period="6mo")
+        
+        if hist.empty:
+            return None
+        
+        # Calculate technical indicators
+        current_price = hist['Close'].iloc[-1]
+        prev_price = hist['Close'].iloc[-2] if len(hist) > 1 else current_price
+        
+        # Price changes
+        daily_change = ((current_price - prev_price) / prev_price) * 100
+        weekly_change = ((current_price - hist['Close'].iloc[-5]) / hist['Close'].iloc[-5]) * 100 if len(hist) >= 5 else 0
+        monthly_change = ((current_price - hist['Close'].iloc[-20]) / hist['Close'].iloc[-20]) * 100 if len(hist) >= 20 else 0
+        
+        # Moving averages
+        ma20 = hist['Close'].rolling(window=20).mean().iloc[-1] if len(hist) >= 20 else current_price
+        ma50 = hist['Close'].rolling(window=50).mean().iloc[-1] if len(hist) >= 50 else current_price
+        
+        # RSI
+        rsi = calculate_rsi(hist['Close'])
+        
+        # MACD
+        macd_data = calculate_macd(hist['Close'])
+        
+        # Volume analysis
+        avg_volume = hist['Volume'].rolling(window=20).mean().iloc[-1] if len(hist) >= 20 else hist['Volume'].mean()
+        current_volume = hist['Volume'].iloc[-1]
+        volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1
+        
+        # Scoring system (1-10 scale)
+        # Fundamental score based on PE, PB, etc
+        pe = info.get('trailingPE', 15)
+        pb = info.get('priceToBook', 1.5)
+        
+        if pe < 15:
+            fundamental_score = 8
+        elif pe < 25:
+            fundamental_score = 6
+        elif pe < 35:
+            fundamental_score = 4
+        else:
+            fundamental_score = 3
+            
+        # Momentum score based on price action and RSI
+        if rsi < 30:  # Oversold
+            momentum_score = 8
+        elif rsi > 70:  # Overbought
+            momentum_score = 4
+        else:
+            momentum_score = 6
+            
+        # Adjust for trend
+        if current_price > ma50 and current_price > ma20:
+            momentum_score += 1
+        elif current_price < ma50 and current_price < ma20:
+            momentum_score -= 1
+            
+        # Valuation score
+        if pb < 1:
+            valuation_score = 8
+        elif pb < 2:
+            valuation_score = 7
+        elif pb < 3:
+            valuation_score = 5
+        else:
+            valuation_score = 4
+            
+        # Catalyst score based on volume and news (simplified)
+        catalyst_score = 5
+        if volume_ratio > 1.5:
+            catalyst_score += 2
+        elif volume_ratio > 1.2:
+            catalyst_score += 1
+            
+        # Determine decision
+        total_score = (fundamental_score + momentum_score + valuation_score + catalyst_score) / 4
+        
+        if total_score >= 7:
+            decision = "BELI"
+            conviction = min(10, int(total_score + 1))
+        elif total_score <= 4:
+            decision = "JUAL"
+            conviction = min(10, int(10 - total_score))
+        else:
+            decision = "TAHAN"
+            conviction = int(total_score)
+            
+        # Target price calculation
+        target_price = current_price * (1 + (total_score - 5) * 0.05) if total_score > 5 else current_price * 0.95
+        
+        # Generate analysis text
+        company_name = info.get('longName', symbol)
+        sector = info.get('sector', 'N/A')
+        
+        kondisi_makro = f"Sektor {sector} saat ini menghadapi dinamika pasar yang kompleks. "
+        if rsi > 70:
+            kondisi_makro += "Tekanan jual mulai terlihat karena kondisi jenuh beli (overbought) di level RSI {:.1f}. ".format(rsi)
+        elif rsi < 30:
+            kondisi_makro += "Peluang akumulasi muncul karena kondisi jenuh jual (oversold) di level RSI {:.1f}. ".format(rsi)
+        else:
+            kondisi_makro += "Pasar berada dalam fase konsolidasi dengan momentum yang netral (RSI {:.1f}). ".format(rsi)
+            
+        kondisi_makro += f"Volume perdagangan {'meningkat' if volume_ratio > 1.2 else 'menurun'} {volume_ratio:.1f}x dari rata-rata."
+        
+        peluang_tersembunyi = f"Valuasi PB {pb:.2f}x tergolong {'murah' if pb < 1.5 else 'wajar' if pb < 3 else 'premium'}. "
+        if pe < 20:
+            peluang_tersembunyi += f"PER {pe:.1f}x masih menarik dibandingkan rata-rata historis. "
+        if volume_ratio > 1.3:
+            peluang_tersembunyi += "Ada peningkatan volume signifikan yang mengindikasikan minat institusional. "
+            
+        risiko_utama = f"Resistance teknikal di level Rp{ma50:.0f} (MA50) perlu ditembus untuk kelanjutan tren. "
+        if rsi > 70:
+            risiko_utama += "Koreksi jangka pendek sangat mungkin terjadi karena kondisi overbought. "
+        elif rsi < 30:
+            risiko_utama += "Pelemahan masih berpotensi berlanjut meski sudah oversold. "
+            
+        strategi_masuk = f"Entry ideal di kisaran Rp{current_price*0.97:.0f}-Rp{current_price:.0f} "
+        if decision == "BELI":
+            strategi_masuk += "dengan akumulasi bertahap (DCA). "
+        elif decision == "JUAL":
+            strategi_masuk += "untuk cut loss, exit di level Rp{current_price*0.95:.0f} jika breakdown. "
+        else:
+            strategi_masuk += "sambil wait and see hingga konfirmasi breakout/breakdown. "
+            
+        target_harga = f"Target harga 6-12 bulan: Rp{target_price:.0f}"
+        if decision == "BELI":
+            target_harga += f" (potensi upside {((target_price/current_price)-1)*100:.1f}%)"
+            
+        # Filosofi quotes
+        filosofi_quotes = {
+            "BELI": "Ketika ketakutan menguasai pasar, di sanalah harta karun tersembunyi. Jangan ikut arus, belilah saat darah mengalir di jalanan.",
+            "JUAL": "Keserakahan adalah lawan terburuk investor. Ketika semua orang terbuai mimpi, saatnya mengambil keuntungan dan pergi.",
+            "TAHAN": "Orang bijak tahu kapan harus diam. Dalam ketidakpastian, bertahan adalah strategi terbaik."
+        }
+        
+        return {
+            "keputusan": decision,
+            "conviction": conviction,
+            "ringkasan": f"{company_name} menunjukkan prospek {'positif' if decision == 'BELI' else 'negatif' if decision == 'JUAL' else 'netral'} dengan conviction {conviction}/10.",
+            "kondisi_makro": kondisi_makro,
+            "peluang_tersembunyi": peluang_tersembunyi,
+            "risiko_utama": risiko_utama,
+            "strategi_masuk": strategi_masuk,
+            "target_harga": target_harga,
+            "filosofi": filosofi_quotes.get(decision, filosofi_quotes["TAHAN"]),
+            "skor": {
+                "fundamental": min(10, max(1, int(fundamental_score))),
+                "momentum": min(10, max(1, int(momentum_score))),
+                "valuasi": min(10, max(1, int(valuation_score))),
+                "katalis": min(10, max(1, int(catalyst_score)))
+            },
+            "company_name": company_name,
+            "current_price": current_price,
+            "daily_change": daily_change
+        }
+        
+    except Exception as e:
+        st.error(f"Error analyzing {symbol}: {str(e)}")
+        return None
 
 def score_color(val: int) -> str:
     if val >= 7: return "#d4af37"
@@ -297,67 +476,6 @@ def render_score_bar(label: str, value: int):
     """, unsafe_allow_html=True)
 
 
-def analyze_stock(query: str, api_key: str) -> dict:
-    """
-    Call Anthropic API with web search tool and handle multi-turn tool use.
-    Returns parsed JSON result dict.
-    """
-    client = anthropic.Anthropic(api_key=api_key)
-
-    user_message = (
-        f'Analisis saham / instrumen investasi berikut dengan pola pikir Reborn Rich: "{query}". '
-        f'Gunakan web search untuk mendapatkan data terkini: harga saham hari ini, berita terbaru, '
-        f'laporan keuangan, kondisi industri, dan sentimen pasar. Berikan analisis komprehensif dalam format JSON.'
-    )
-
-    messages = [{"role": "user", "content": user_message}]
-    tools = [{"type": "web_search_20250305", "name": "web_search"}]
-
-    # Agentic loop — maksimal 5 iterasi untuk handle multi tool-use
-    for _ in range(5):
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=4000,
-            system=SYSTEM_PROMPT,
-            tools=tools,
-            messages=messages,
-        )
-
-        # Append assistant response ke history
-        messages.append({"role": "assistant", "content": response.content})
-
-        if response.stop_reason == "end_turn":
-            # Cari text block
-            for block in response.content:
-                if block.type == "text" and block.text.strip():
-                    raw = block.text.strip()
-                    raw = re.sub(r'^```json\s*', '', raw, flags=re.IGNORECASE)
-                    raw = re.sub(r'^```\s*', '', raw, flags=re.IGNORECASE)
-                    raw = re.sub(r'```\s*$', '', raw)
-                    m = re.search(r'\{[\s\S]*\}', raw)
-                    if m:
-                        return json.loads(m.group(0))
-            raise ValueError("Tidak ditemukan JSON dalam respons AI.")
-
-        elif response.stop_reason == "tool_use":
-            # Kumpulkan semua tool_result dan lanjutkan
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    # Untuk web_search, hasilnya sudah di-handle API — kirim placeholder
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": "Search results retrieved successfully.",
-                    })
-            if tool_results:
-                messages.append({"role": "user", "content": tool_results})
-        else:
-            raise ValueError(f"Stop reason tidak dikenal: {response.stop_reason}")
-
-    raise ValueError("Melebihi batas iterasi tool use.")
-
-
 # ── UI ────────────────────────────────────────────────────────────────────────
 
 def render_header():
@@ -370,28 +488,6 @@ def render_header():
     """, unsafe_allow_html=True)
 
 
-def render_api_settings():
-    """Tampilkan input API key jika belum ada di secrets."""
-    try:
-        st.secrets["ANTHROPIC_API_KEY"]
-        return  # Sudah ada di secrets, tidak perlu input
-    except Exception:
-        pass
-
-    with st.expander("⚙ Pengaturan API Key"):
-        st.markdown('<p style="color:#8b7355;font-size:0.75rem;">Masukkan Anthropic API Key kamu. Key tidak disimpan secara permanen.</p>', unsafe_allow_html=True)
-        key_input = st.text_input(
-            "Anthropic API Key",
-            value=st.session_state.get("api_key", ""),
-            type="password",
-            placeholder="sk-ant-...",
-            label_visibility="collapsed"
-        )
-        if key_input:
-            st.session_state["api_key"] = key_input
-            st.success("✓ API Key tersimpan untuk sesi ini")
-
-
 def render_result(result: dict):
     keputusan = result.get("keputusan", "TAHAN").upper()
     conviction = result.get("conviction", 5)
@@ -401,10 +497,20 @@ def render_result(result: dict):
     filled = "▮" * conviction
     empty  = "▯" * (10 - conviction)
 
+    # Show current price info
+    current_price = result.get('current_price', 0)
+    daily_change = result.get('daily_change', 0)
+    change_color = "#4ade80" if daily_change >= 0 else "#f87171"
+    change_sign = "+" if daily_change >= 0 else ""
+
     # ── Decision Banner ─────────────────────────────────────────────────────
     st.markdown(f"""
     <div class="rr-card {css_class}" style="text-align:center;padding:2rem 1.5rem;">
         <div class="rr-card-label">KEPUTUSAN FINAL</div>
+        <div style="font-family:'Courier Prime',monospace; color:#8b7355; font-size:0.9rem; margin-bottom:0.5rem;">
+            {result.get('company_name', '')} | Rp{current_price:,.0f} 
+            <span style="color:{change_color};">({change_sign}{daily_change:.2f}%)</span>
+        </div>
         <div class="{word_class}" style="font-family:'Playfair Display',serif;font-size:clamp(2.5rem,8vw,4rem);font-weight:700;letter-spacing:0.1em;">
             {keputusan}
         </div>
@@ -498,67 +604,89 @@ def render_empty_state():
 
 def main():
     render_header()
-    render_api_settings()
+    
+    # Add info that we're using yfinance
+    st.markdown("""
+    <div style="text-align:center; margin-bottom:1rem;">
+        <span style="background:#1a1410; color:#d4af37; padding:0.2rem 1rem; border-radius:20px; font-size:0.7rem;">
+            📊 Real-time data dari Yahoo Finance
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
 
     # Input area
     st.markdown('<div class="rr-card-label" style="padding:0 0 0.4rem;">TARGET ANALISIS</div>', unsafe_allow_html=True)
     query = st.text_area(
         label="target",
         label_visibility="collapsed",
-        placeholder="Contoh: BBCA, Tesla TSLA, Bitcoin, Emas, BREN, saham sektor perbankan Indonesia...",
+        placeholder="Contoh: BBCA, Tesla TSLA, Bitcoin BTC, Emas, BREN...",
         height=90,
         key="query_input"
     )
+
+    # Example buttons
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        if st.button("🇮🇩 BBCA", use_container_width=True):
+            st.session_state.query_input = "BBCA"
+    with col2:
+        if st.button("🇺🇸 TSLA", use_container_width=True):
+            st.session_state.query_input = "TSLA"
+    with col3:
+        if st.button("₿ BTC", use_container_width=True):
+            st.session_state.query_input = "BTC"
+    with col4:
+        if st.button("🏦 BREN", use_container_width=True):
+            st.session_state.query_input = "BREN"
 
     analyze_btn = st.button("▶  ANALISIS SEKARANG", use_container_width=True)
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
     if analyze_btn:
-        api_key = get_api_key()
-        if not api_key:
-            st.error("⚠ API Key belum diatur. Buka pengaturan di atas dan masukkan Anthropic API Key kamu.")
-            return
         if not query.strip():
             st.warning("Masukkan nama saham atau instrumen investasi terlebih dahulu.")
             return
 
-        phases = [
-            "🔍 Memindai pasar global...",
-            "📡 Membaca pola tersembunyi...",
-            "🧮 Menghitung probabilitas...",
-            "⚡ Menyusun keputusan final..."
-        ]
-        status_placeholder = st.empty()
-        for i, phase_text in enumerate(phases):
-            status_placeholder.info(phase_text)
-            if i < len(phases) - 1:
-                time.sleep(0.1)
+        # Extract symbol and analyze
+        with st.spinner("🔍 Mengambil data pasar real-time..."):
+            symbol = extract_symbol(query.strip())
+            
+            phases = [
+                f"🔍 Memindai data {symbol}...",
+                "📡 Membaca pola teknikal...",
+                "🧮 Menghitung indikator dan probabilitas...",
+                "⚡ Menyusun keputusan final..."
+            ]
+            status_placeholder = st.empty()
+            for i, phase_text in enumerate(phases):
+                status_placeholder.info(phase_text)
+                if i < len(phases) - 1:
+                    time.sleep(0.1)
 
-        try:
-            result = analyze_stock(query.strip(), api_key)
-            status_placeholder.empty()
-            render_result(result)
+            try:
+                result = analyze_with_yfinance(symbol)
+                status_placeholder.empty()
+                
+                if result:
+                    render_result(result)
 
-            # Simpan ke history session
-            if "history" not in st.session_state:
-                st.session_state["history"] = []
-            st.session_state["history"].insert(0, {
-                "query": query.strip(),
-                "keputusan": result.get("keputusan"),
-                "conviction": result.get("conviction"),
-                "ringkasan": result.get("ringkasan", "")[:100] + "..."
-            })
+                    # Simpan ke history session
+                    if "history" not in st.session_state:
+                        st.session_state["history"] = []
+                    st.session_state["history"].insert(0, {
+                        "query": query.strip(),
+                        "symbol": symbol,
+                        "keputusan": result.get("keputusan"),
+                        "conviction": result.get("conviction"),
+                        "ringkasan": result.get("ringkasan", "")[:100] + "..."
+                    })
+                else:
+                    st.error(f"⚠ Tidak dapat menemukan data untuk '{query}'. Coba gunakan kode saham yang valid (contoh: BBCA.JK untuk Indonesia, TSLA untuk US).")
 
-        except anthropic.AuthenticationError:
-            status_placeholder.empty()
-            st.error("⚠ API Key tidak valid. Periksa kembali API Key kamu.")
-        except json.JSONDecodeError as e:
-            status_placeholder.empty()
-            st.error(f"⚠ Gagal mem-parse respons AI: {e}")
-        except Exception as e:
-            status_placeholder.empty()
-            st.error(f"⚠ Error: {e}")
+            except Exception as e:
+                status_placeholder.empty()
+                st.error(f"⚠ Error: {str(e)}")
     else:
         # History sidebar
         if st.session_state.get("history"):
@@ -574,6 +702,7 @@ def main():
                             <span style="color:{color};font-weight:700;font-size:0.75rem;">{keputusan}</span>
                         </div>
                         <div style="color:#5c4a2a;font-size:0.65rem;">Conviction: {item['conviction']}/10</div>
+                        <div style="color:#3d2e15;font-size:0.6rem;">{item.get('symbol', '')}</div>
                     </div>
                     """, unsafe_allow_html=True)
         else:
